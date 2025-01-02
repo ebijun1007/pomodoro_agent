@@ -1,7 +1,6 @@
 name = "pomodoro-agent"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
-compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "DB"
@@ -12,3 +11,8 @@ database_id = "YOUR_DATABASE_ID"
 # Add your Slack credentials here
 SLACK_BOT_TOKEN = "YOUR_SLACK_BOT_TOKEN"
 SLACK_SIGNING_SECRET = "YOUR_SLACK_SIGNING_SECRET"
+ANTHROPIC_API_KEY = "your-api-key-here"
+
+[[kv_namespaces]]
+binding = "pomodoro_context"
+id = "YOUR_KV_ID"

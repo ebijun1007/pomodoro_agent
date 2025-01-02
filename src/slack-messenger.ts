@@ -3,25 +3,28 @@ export class SlackMessenger {
 
   constructor(private readonly token: string) {
     // 1時間ごとにメッセージキャッシュをクリア
-    setInterval(() => {
-      this.processedMessages.clear();
-    }, 1000 * 60 * 60);
+    setInterval(
+      () => {
+        this.processedMessages.clear();
+      },
+      1000 * 60 * 60
+    );
   }
 
   async sendMessage(channel: string, text: string, threadTs?: string): Promise<boolean> {
     const messageKey = `${channel}-${threadTs || Date.now()}`;
-    
+
     // 同じメッセージが短時間に重複して送信されることを防ぐ
     if (this.processedMessages.has(messageKey)) {
       return false;
     }
-    
+
     try {
       const response = await fetch('https://slack.com/api/chat.postMessage', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json; charset=utf-8',
-          'Authorization': `Bearer ${this.token}`,
+          Authorization: `Bearer ${this.token}`,
         },
         body: JSON.stringify({
           channel,

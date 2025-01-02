@@ -1,159 +1,102 @@
+import { TaskManager } from './task';
+import { PomodoroManager } from './pomodoro';
+import { ContextManager } from './context-manager';
+import { AIProcessor } from './ai';
+
 export class AgentManager {
   constructor(
     private taskManager: TaskManager,
-    private pomodoroManager: PomodoroManager
+    private pomodoroManager: PomodoroManager,
+    private contextManager: ContextManager,
+    private aiProcessor: AIProcessor
   ) {}
 
   async handleMessage(message: string): Promise<string> {
     try {
-      // プロジェクト作成コマンドの処理
-      if (message.includes('新しいプロジェクト') || message.includes('プロジェクトを作成')) {
-        const projectDetails = this.extractProjectDetails(message);
-        if (!projectDetails) {
-          return (
-            'プロジェクトの作成には以下の情報が必要です：\n' +
-            '- プロジェクト名\n' +
-            '- 説明\n' +
-            '- 期限\n\n' +
-            '例：\n' +
-            'プロジェクト名: ウェブアプリ開発\n' +
-            '説明: 新規サービスの開発プロジェクト\n' +
-            '期限: 2024-03-31'
-          );
-        }
+      console.log('AgentManager: Processing message:', message); // デバッグログ
 
-        const { name, description, deadline } = projectDetails;
-        await this.taskManager.createProject(name, description, deadline);
-        return `プロジェクト「${name}」を作成しました。\n説明: ${description}\n期限: ${deadline}`;
-      }
+      // コンテキストの初期化/更新
+      await this.contextManager.updateConversationContext(message);
+      console.log('AgentManager: Context updated'); // デバッグログ
 
-      // タスク追加コマンドの処理
-      if (message.includes('新しいタスク') || message.includes('タスクを追加')) {
-        const taskDetails = this.extractTaskDetails(message);
-        if (!taskDetails) {
-          return (
-            'タスクの追加には以下の情報が必要です：\n' +
-            '- プロジェクト名\n' +
-            '- タスク名\n' +
-            '- 説明\n' +
-            '- 期限\n' +
-            '- 見積時間（分）\n\n' +
-            '例：\n' +
-            'プロジェクト: ウェブアプリ開発\n' +
-            'タスク: ログイン機能の実装\n' +
-            '説明: ユーザー認証システムの実装\n' +
-            '期限: 2024-02-15\n' +
-            '見積時間: 120'
-          );
-        }
+      // メッセージの解析
+      const prompt = await this.contextManager.buildPrompt(message);
+      console.log('AgentManager: Built prompt:', prompt); // デバッグログ
 
-        const { projectId, title, description, deadline, estimatedMinutes } = taskDetails;
-        await this.taskManager.createTask(
-          projectId,
-          title,
-          description,
-          deadline,
-          estimatedMinutes
-        );
-        return `タスク「${title}」を作成しました。\n説明: ${description}\n期限: ${deadline}\n見積時間: ${estimatedMinutes}分`;
-      }
+      const analysis = await this.aiProcessor.analyzeMessage(prompt);
+      console.log('AgentManager: AI analysis result:', analysis); // デバッグログ
 
-      // ポモドーロ開始コマンドの処理
-      if (message.includes('ポモドーロ開始') || message.includes('作業開始')) {
-        const pomodoroSettings = this.extractPomodoroSettings(message);
-        if (!pomodoroSettings) {
-          return (
-            'ポモドーロセッションの開始には以下の情報が必要です：\n' +
-            '- タスク名\n' +
-            '- 作業時間（分）\n' +
-            '- 休憩時間（分）\n\n' +
-            '例：\n' +
-            'タスク: ログイン機能の実装\n' +
-            '作業時間: 25\n' +
-            '休憩時間: 5'
-          );
-        }
+      // 応答の生成
+      const response = await this.handleIntent(analysis.intent, analysis.entities);
+      console.log('AgentManager: Generated response:', response); // デバッグログ
 
-        const { taskId, workMinutes, breakMinutes } = pomodoroSettings;
-        await this.pomodoroManager.startSession(taskId, workMinutes, breakMinutes);
+      // アシスタントの応答をコンテキストに追加
+      await this.contextManager.addAssistantResponse(response);
 
-        const taskDetails = await this.taskManager.getTaskDetails(taskId);
-        return `ポモドーロセッションを開始します。\nタスク: ${taskDetails.title}\n作業時間: ${workMinutes}分\n休憩時間: ${breakMinutes}分`;
-      }
-
-      // ヘルプメッセージ
-      return (
-        'どのような作業をお手伝いしましょうか？\n\n' +
-        '利用可能なコマンド：\n' +
-        '1. 新しいプロジェクトを作成\n' +
-        '2. 新しいタスクを追加\n' +
-        '3. ポモドーロを開始\n\n' +
-        'それぞれのコマンドについて、詳しい使い方を知りたい場合は「使い方」と話しかけてください。'
-      );
+      return response;
     } catch (error) {
       console.error('Agent message handling error:', error);
-      return (
-        '申し訳ありません。処理中にエラーが発生しました。\n' +
-        'コマンドの形式を確認して、もう一度お試しください。'
-      );
+      return '申し訳ありません。処理中にエラーが発生しました。もう一度お試しください。';
     }
   }
 
-  private extractProjectDetails(message: string): any {
-    // メッセージからプロジェクト情報を抽出するロジック
-    try {
-      const lines = message.split('\n');
-      let name, description, deadline;
+  private async handleIntent(intent: string, entities: any): Promise<string> {
+    console.log('AgentManager: Handling intent:', intent, 'with entities:', entities); // デバッグログ
 
-      for (const line of lines) {
-        if (line.includes('プロジェクト名:')) {
-          name = line.split(':')[1].trim();
-        } else if (line.includes('説明:')) {
-          description = line.split(':')[1].trim();
-        } else if (line.includes('期限:')) {
-          deadline = line.split(':')[1].trim();
-        }
-      }
-
-      if (name && description && deadline) {
-        return { name, description, deadline };
-      }
-      return null;
-    } catch (error) {
-      console.error('Error extracting project details:', error);
-      return null;
+    switch (intent) {
+      case 'create_project':
+        return this.handleCreateProject(entities);
+      case 'create_task':
+        return this.handleCreateTask(entities);
+      case 'start_pomodoro':
+        return this.handleStartPomodoro(entities);
+      case 'check_status':
+        return this.handleCheckStatus();
+      default:
+        return 'ご要望を理解できませんでした。もう少し具体的に教えていただけますか？';
     }
   }
 
-  private extractTaskDetails(message: string): any {
-    // メッセージからタスク情報を抽出するロジック
-    try {
-      const lines = message.split('\n');
-      let projectId, title, description, deadline, estimatedMinutes;
+  private async handleCreateProject(entities: any): Promise<string> {
+    console.log('AgentManager: Creating project with entities:', entities); // デバッグログ
+    const { name, description, deadline } = entities;
 
-      // 実際の実装では、プロジェクト名からIDを取得する処理が必要
-      projectId = 'test-project-id'; // 仮の実装
-
-      return null;
-    } catch (error) {
-      console.error('Error extracting task details:', error);
-      return null;
+    if (!name || !description || !deadline) {
+      return 'プロジェクトの作成には、名前、説明、期限が必要です。\n例：プロジェクト名: ウェブアプリ開発\n説明: 新規サービスの開発プロジェクト\n期限: 2024-03-31';
     }
+
+    await this.taskManager.createProject(name, description, deadline);
+    return `プロジェクト「${name}」を作成しました。\n説明: ${description}\n期限: ${deadline}`;
   }
 
-  private extractPomodoroSettings(message: string): any {
-    // メッセージからポモドーロ設定を抽出するロジック
-    try {
-      const lines = message.split('\n');
-      let taskId, workMinutes, breakMinutes;
+  private async handleCreateTask(entities: any): Promise<string> {
+    console.log('AgentManager: Creating task with entities:', entities); // デバッグログ
+    const { projectId, title, description, deadline, estimatedMinutes } = entities;
 
-      // 実際の実装では、タスク名からIDを取得する処理が必要
-      taskId = 'test-task-id'; // 仮の実装
-
-      return null;
-    } catch (error) {
-      console.error('Error extracting pomodoro settings:', error);
-      return null;
+    if (!projectId || !title || !description || !deadline || !estimatedMinutes) {
+      return 'タスクの作成には、プロジェクト、タイトル、説明、期限、見積時間が必要です。';
     }
+
+    await this.taskManager.createTask(projectId, title, description, deadline, estimatedMinutes);
+    return `タスク「${title}」を作成しました。\n説明: ${description}\n期限: ${deadline}\n見積時間: ${estimatedMinutes}分`;
+  }
+
+  private async handleStartPomodoro(entities: any): Promise<string> {
+    console.log('AgentManager: Starting pomodoro with entities:', entities); // デバッグログ
+    const { taskId, workMinutes = 25, breakMinutes = 5 } = entities;
+
+    if (!taskId) {
+      return 'ポモドーロを開始するには、タスクを指定してください。';
+    }
+
+    await this.pomodoroManager.startSession(taskId, workMinutes, breakMinutes);
+    const taskDetails = await this.taskManager.getTaskDetails(taskId);
+
+    return `ポモドーロセッションを開始します。\nタスク: ${taskDetails.title}\n作業時間: ${workMinutes}分\n休憩時間: ${breakMinutes}分`;
+  }
+
+  private async handleCheckStatus(): Promise<string> {
+    const context = await this.contextManager.initializeDailyContext();
+    return `今日の進捗状況:\n完了したポモドーロ: ${context.completedPomodoros} / ${context.dailyGoal}`;
   }
 }
