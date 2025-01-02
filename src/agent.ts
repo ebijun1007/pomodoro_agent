@@ -2,6 +2,7 @@ import { TaskManager } from './task';
 import { PomodoroManager } from './pomodoro';
 import { ContextManager } from './context-manager';
 import { AIProcessor } from './ai';
+import { generateSummaryMessage } from './scheduled-summary';
 
 export class AgentManager {
   constructor(
@@ -11,92 +12,240 @@ export class AgentManager {
     private aiProcessor: AIProcessor
   ) {}
 
-  async handleMessage(message: string): Promise<string> {
+  async handleMessage(message: string, channelId: string): Promise<string> {
     try {
-      console.log('AgentManager: Processing message:', message); // デバッグログ
+      const analysis = await this.aiProcessor.analyzeMessage(message);
+      console.log('Message analysis:', analysis);
 
-      // コンテキストの初期化/更新
-      await this.contextManager.updateConversationContext(message);
-      console.log('AgentManager: Context updated'); // デバッグログ
-
-      // メッセージの解析
-      const prompt = await this.contextManager.buildPrompt(message);
-      console.log('AgentManager: Built prompt:', prompt); // デバッグログ
-
-      const analysis = await this.aiProcessor.analyzeMessage(prompt);
-      console.log('AgentManager: AI analysis result:', analysis); // デバッグログ
-
-      // 応答の生成
-      const response = await this.handleIntent(analysis.intent, analysis.entities);
-      console.log('AgentManager: Generated response:', response); // デバッグログ
-
-      // アシスタントの応答をコンテキストに追加
-      await this.contextManager.addAssistantResponse(response);
-
-      return response;
+      switch (analysis.intent) {
+        case 'list_tasks':
+          return await this.handleListTasks(analysis.entities);
+        case 'show_summary':
+          return await this.handleShowSummary();
+        case 'list_projects':
+          return await this.handleListProjects();
+        case 'create_project':
+          return await this.handleCreateProject(analysis.entities);
+        case 'delete_project':
+          return await this.handleDeleteProject(analysis.entities, channelId);
+        case 'create_task':
+          return await this.handleCreateTask(analysis.entities);
+        case 'start_pomodoro':
+          return await this.handleStartPomodoro(analysis.entities, channelId);
+        case 'going_out':
+          return await this.handleGoingOut(analysis.entities);
+        case 'coming_back':
+          return await this.handleComingBack();
+        case 'help':
+          return this.getHelpMessage();
+        default:
+          return 'すみません、よく理解できませんでした。「ヘルプ」と入力すると、使用可能なコマンドの一覧を表示します。';
+      }
     } catch (error) {
-      console.error('Agent message handling error:', error);
-      return '申し訳ありません。処理中にエラーが発生しました。もう一度お試しください。';
+      console.error('Message handling error:', error);
+      return 'すみません、エラーが発生しました。もう一度お試しください。';
     }
   }
 
-  private async handleIntent(intent: string, entities: any): Promise<string> {
-    console.log('AgentManager: Handling intent:', intent, 'with entities:', entities); // デバッグログ
+  private async handleListTasks(entities: any): Promise<string> {
+    try {
+      const tasks = entities.projectId
+        ? await this.taskManager.getTasksByProject(entities.projectId)
+        : await this.taskManager.getAllTasks();
 
-    switch (intent) {
-      case 'create_project':
-        return this.handleCreateProject(entities);
-      case 'create_task':
-        return this.handleCreateTask(entities);
-      case 'start_pomodoro':
-        return this.handleStartPomodoro(entities);
-      case 'check_status':
-        return this.handleCheckStatus();
-      default:
-        return 'ご要望を理解できませんでした。もう少し具体的に教えていただけますか？';
+      if (tasks.length === 0) {
+        return entities.projectId
+          ? 'このプロジェクトにはまだタスクがありません。'
+          : 'タスクはまだ登録されていません。';
+      }
+
+      const taskList = tasks
+        .map((task) => `• ${task.id}: ${task.title} (${task.status}) - ${task.estimated_minutes}分`)
+        .join('\n');
+
+      return `📝 *タスク一覧*\n\n${taskList}`;
+    } catch (error) {
+      console.error('List tasks error:', error);
+      return 'タスク一覧の取得中にエラーが発生しました。';
+    }
+  }
+
+  private async handleShowSummary(): Promise<string> {
+    try {
+      const summary = await generateSummaryMessage(this.taskManager, this.pomodoroManager);
+      return `📊 *現在の作業状況*\n\n${summary}`;
+    } catch (error) {
+      console.error('Show summary error:', error);
+      return 'サマリーの生成中にエラーが発生しました。';
+    }
+  }
+
+  private async handleListProjects(): Promise<string> {
+    try {
+      const projects = await this.taskManager.getAllProjects();
+      if (projects.length === 0) {
+        return 'プロジェクトはまだ登録されていません。';
+      }
+
+      const projectList = projects
+        .map(
+          (project) => `• ${project.id}: ${project.name} (期限: ${project.deadline || '未設定'})`
+        )
+        .join('\n');
+
+      return `📋 *プロジェクト一覧*\n\n${projectList}`;
+    } catch (error) {
+      console.error('List projects error:', error);
+      return 'プロジェクト一覧の取得中にエラーが発生しました。';
     }
   }
 
   private async handleCreateProject(entities: any): Promise<string> {
-    console.log('AgentManager: Creating project with entities:', entities); // デバッグログ
-    const { name, description, deadline } = entities;
+    try {
+      if (!entities.name) {
+        return 'プロジェクト名を指定してください。';
+      }
 
-    if (!name || !description || !deadline) {
-      return 'プロジェクトの作成には、名前、説明、期限が必要です。\n例：プロジェクト名: ウェブアプリ開発\n説明: 新規サービスの開発プロジェクト\n期限: 2024-03-31';
+      const projectId = await this.taskManager.createProject({
+        name: entities.name,
+        description: entities.description || '',
+        deadline: entities.deadline,
+      });
+
+      return `✅ プロジェクト「${entities.name}」を作成しました（ID: ${projectId}）`;
+    } catch (error) {
+      console.error('Create project error:', error);
+      return 'プロジェクトの作成中にエラーが発生しました。';
     }
+  }
 
-    await this.taskManager.createProject(name, description, deadline);
-    return `プロジェクト「${name}」を作成しました。\n説明: ${description}\n期限: ${deadline}`;
+  private async handleDeleteProject(entities: any, channelId: string): Promise<string> {
+    try {
+      const projectId = entities.projectId;
+      if (!projectId) {
+        return '削除するプロジェクトのIDを指定してください。';
+      }
+
+      // プロジェクトの存在確認
+      const project = await this.taskManager.getProject(projectId);
+      if (!project) {
+        return `プロジェクト（ID: ${projectId}）が見つかりません。`;
+      }
+
+      // プロジェクトの削除を実行
+      await this.taskManager.deleteProject(projectId);
+
+      return `✅ プロジェクト「${project.name}」を削除しました。`;
+    } catch (error) {
+      console.error('Delete project error:', error);
+      return 'プロジェクトの削除中にエラーが発生しました。操作をやり直してください。';
+    }
   }
 
   private async handleCreateTask(entities: any): Promise<string> {
-    console.log('AgentManager: Creating task with entities:', entities); // デバッグログ
-    const { projectId, title, description, deadline, estimatedMinutes } = entities;
+    try {
+      if (!entities.projectId) {
+        return 'タスクを作成するプロジェクトを指定してください。';
+      }
+      if (!entities.title) {
+        return 'タスクのタイトルを指定してください。';
+      }
 
-    if (!projectId || !title || !description || !deadline || !estimatedMinutes) {
-      return 'タスクの作成には、プロジェクト、タイトル、説明、期限、見積時間が必要です。';
+      const taskId = await this.taskManager.createTask({
+        projectId: entities.projectId,
+        title: entities.title,
+        description: entities.description || '',
+        deadline: entities.deadline,
+        estimatedMinutes: entities.estimatedMinutes || 25,
+      });
+
+      return `✅ タスク「${entities.title}」を作成しました（ID: ${taskId}）`;
+    } catch (error) {
+      console.error('Create task error:', error);
+      return 'タスクの作成中にエラーが発生しました。';
     }
-
-    await this.taskManager.createTask(projectId, title, description, deadline, estimatedMinutes);
-    return `タスク「${title}」を作成しました。\n説明: ${description}\n期限: ${deadline}\n見積時間: ${estimatedMinutes}分`;
   }
 
-  private async handleStartPomodoro(entities: any): Promise<string> {
-    console.log('AgentManager: Starting pomodoro with entities:', entities); // デバッグログ
-    const { taskId, workMinutes = 25, breakMinutes = 5 } = entities;
+  private async handleStartPomodoro(entities: any, channelId: string): Promise<string> {
+    try {
+      if (!entities.taskId) {
+        return 'ポモドーロを開始するタスクのIDを指定してください。';
+      }
 
-    if (!taskId) {
-      return 'ポモドーロを開始するには、タスクを指定してください。';
+      const task = await this.taskManager.getTask(entities.taskId);
+      if (!task) {
+        return `タスク（ID: ${entities.taskId}）が見つかりません。`;
+      }
+
+      await this.pomodoroManager.startPomodoro({
+        taskId: entities.taskId,
+        channelId,
+        workMinutes: entities.workMinutes || 25,
+        breakMinutes: entities.breakMinutes || 5,
+      });
+
+      return `⏰ タスク「${task.title}」のポモドーロを開始します（${
+        entities.workMinutes || 25
+      }分作業 / ${entities.breakMinutes || 5}分休憩）`;
+    } catch (error) {
+      console.error('Start pomodoro error:', error);
+      return 'ポモドーロの開始中にエラーが発生しました。';
     }
-
-    await this.pomodoroManager.startSession(taskId, workMinutes, breakMinutes);
-    const taskDetails = await this.taskManager.getTaskDetails(taskId);
-
-    return `ポモドーロセッションを開始します。\nタスク: ${taskDetails.title}\n作業時間: ${workMinutes}分\n休憩時間: ${breakMinutes}分`;
   }
 
-  private async handleCheckStatus(): Promise<string> {
-    const context = await this.contextManager.initializeDailyContext();
-    return `今日の進捗状況:\n完了したポモドーロ: ${context.completedPomodoros} / ${context.dailyGoal}`;
+  private async handleGoingOut(entities: any): Promise<string> {
+    try {
+      const reason = entities.reason || '外出';
+      const duration = entities.duration;
+
+      let message = `👋 ${reason}のため一時退席します。`;
+      if (duration) {
+        message += `\n${duration}分後に戻る予定です。`;
+      }
+      return message;
+    } catch (error) {
+      console.error('Going out error:', error);
+      return 'ステータス更新中にエラーが発生しました。';
+    }
+  }
+
+  private async handleComingBack(): Promise<string> {
+    try {
+      return '🏠 おかえりなさい！';
+    } catch (error) {
+      console.error('Coming back error:', error);
+      return 'ステータス更新中にエラーが発生しました。';
+    }
+  }
+
+  private getHelpMessage(): string {
+    return `
+🤖 *使用可能なコマンド*
+
+📋 *プロジェクト管理*
+• プロジェクト一覧を見せて
+• 新しいプロジェクトを作成して
+• プロジェクトを削除して
+
+📝 *タスク管理*
+• タスク一覧を見せて
+• [プロジェクト名]のタスクを見せて
+• 新しいタスクを追加して
+
+📊 *状況確認*
+• 今日のタスクを教えて
+• 現在の作業状況を教えて
+• サマリーを見せて
+
+⏰ *ポモドーロ管理*
+• タスク[ID]の作業を開始
+• 作業時間を[分]分に設定
+• 休憩時間を[分]分に設定
+
+🚶 *外出・帰宅*
+• 行ってきます
+• 戻りました
+
+各コマンドは自然な日本語で入力できます。`;
   }
 }

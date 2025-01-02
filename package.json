@@ -6,9 +6,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "lint": "biome lint ./src",
+    "lint": "biome lint ./src --apply",
     "format": "biome format ./src --write",
-    "check": "biome check ./src",
+    "check": "biome check ./src --apply",
     "clean": "rimraf dist .wrangler node_modules"
   },
   "dependencies": {

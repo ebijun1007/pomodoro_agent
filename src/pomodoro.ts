@@ -1,106 +1,160 @@
+import type { PomodoroSession, Task } from './types';
+
 export class PomodoroManager {
   constructor(private db: D1Database) {}
 
-  async startSession(taskId: string, workMinutes: number, breakMinutes: number): Promise<string> {
-    const id = crypto.randomUUID();
+  async startPomodoro({
+    taskId,
+    workMinutes,
+    breakMinutes,
+  }: {
+    taskId: string;
+    channelId: string;
+    workMinutes: number;
+    breakMinutes: number;
+  }): Promise<string> {
+    const sessionId = crypto.randomUUID();
     const now = new Date().toISOString();
 
     await this.db
-      .prepare(`
-      INSERT INTO pomodoro_sessions (id, task_id, work_minutes, break_minutes, completed_at)
-      VALUES (?, ?, ?, ?, ?)
-    `)
-      .bind(id, taskId, workMinutes, breakMinutes, now)
+      .prepare(
+        `INSERT INTO pomodoro_sessions (
+          id,
+          task_id,
+          work_minutes,
+          break_minutes,
+          status,
+          start_time,
+          remaining_work_minutes
+        ) VALUES (?, ?, ?, ?, 'active', ?, ?)`
+      )
+      .bind(sessionId, taskId, workMinutes, breakMinutes, now, workMinutes)
       .run();
 
-    // Update daily record
-    const today = new Date().toISOString().split('T')[0];
-    await this.db
-      .prepare(`
-      INSERT INTO daily_records (id, date, completed_sessions)
-      VALUES (?, ?, 1)
-      ON CONFLICT (date) DO UPDATE SET
-      completed_sessions = completed_sessions + 1
-    `)
-      .bind(crypto.randomUUID(), today)
+    return sessionId;
+  }
+
+  async pauseAllPomodoros(): Promise<number> {
+    const now = new Date().toISOString();
+
+    // アクティブなセッションを取得
+    const activeSessions = await this.db
+      .prepare(
+        `SELECT ps.*, t.* FROM pomodoro_sessions ps
+         JOIN tasks t ON ps.task_id = t.id
+         WHERE ps.status = 'active'`
+      )
+      .all();
+
+    let pausedCount = 0;
+    for (const session of activeSessions.results as any[]) {
+      // 経過時間を計算して残り時間を更新
+      const startTime = new Date(session.start_time);
+      const elapsedMinutes = Math.floor((new Date().getTime() - startTime.getTime()) / (1000 * 60));
+      const remainingMinutes = Math.max(0, session.work_minutes - elapsedMinutes);
+
+      await this.db
+        .prepare(
+          `UPDATE pomodoro_sessions
+           SET status = 'paused',
+               pause_time = ?,
+               remaining_work_minutes = ?
+           WHERE id = ?`
+        )
+        .bind(now, remainingMinutes, session.id)
+        .run();
+
+      pausedCount++;
+    }
+
+    return pausedCount;
+  }
+
+  async resumeAllPomodoros(): Promise<number> {
+    const now = new Date().toISOString();
+
+    // 一時停止中のセッションを取得
+    const result = await this.db
+      .prepare(
+        `UPDATE pomodoro_sessions
+         SET status = 'active',
+             start_time = ?,
+             pause_time = NULL
+         WHERE status = 'paused'
+         RETURNING id`
+      )
+      .bind(now)
       .run();
 
-    return id;
+    return result.changes || 0;
   }
 
-  async getActiveSession(): Promise<any> {
-    const today = new Date().toISOString().split('T')[0];
+  async getActiveSessions(): Promise<PomodoroSession[]> {
     const result = await this.db
-      .prepare(`
-      SELECT *
-      FROM pomodoro_sessions
-      WHERE DATE(completed_at) = ?
-      ORDER BY completed_at DESC
-      LIMIT 1
-    `)
-      .bind(today)
-      .first();
+      .prepare(
+        `SELECT * FROM pomodoro_sessions
+         WHERE status = 'active'
+         ORDER BY start_time DESC`
+      )
+      .all();
 
-    return result;
+    return result.results as PomodoroSession[];
   }
 
-  async getDailySessionCount(): Promise<number> {
-    const today = new Date().toISOString().split('T')[0];
+  async getPausedSessions(): Promise<PomodoroSession[]> {
     const result = await this.db
-      .prepare(`
-      SELECT completed_sessions
-      FROM daily_records
-      WHERE date = ?
-    `)
-      .bind(today)
-      .first();
+      .prepare(
+        `SELECT * FROM pomodoro_sessions
+         WHERE status = 'paused'
+         ORDER BY pause_time DESC`
+      )
+      .all();
 
-    return result?.completed_sessions || 0;
+    return result.results as PomodoroSession[];
   }
 
-  async getSessionHistory(taskId: string): Promise<any[]> {
+  async getSessionsByTask(taskId: string): Promise<PomodoroSession[]> {
     const result = await this.db
-      .prepare(`
-      SELECT *
-      FROM pomodoro_sessions
-      WHERE task_id = ?
-      ORDER BY completed_at DESC
-    `)
+      .prepare(
+        `SELECT * FROM pomodoro_sessions
+         WHERE task_id = ?
+         ORDER BY start_time DESC`
+      )
       .bind(taskId)
       .all();
 
-    return result.results;
-  }
-}
-
-export class Timer {
-  private timeoutId: NodeJS.Timeout | null = null;
-
-  constructor(
-    private workMinutes: number,
-    private breakMinutes: number,
-    private onWorkComplete: () => void,
-    private onBreakComplete: () => void
-  ) {}
-
-  startWork(): void {
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-    }
-    this.timeoutId = setTimeout(this.onWorkComplete, this.workMinutes * 60 * 1000);
+    return result.results as PomodoroSession[];
   }
 
-  startBreak(): void {
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-    }
-    this.timeoutId = setTimeout(this.onBreakComplete, this.breakMinutes * 60 * 1000);
+  async getSession(sessionId: string): Promise<PomodoroSession | null> {
+    const result = await this.db
+      .prepare('SELECT * FROM pomodoro_sessions WHERE id = ?')
+      .bind(sessionId)
+      .all();
+
+    const sessions = result.results as PomodoroSession[];
+    return sessions[0] || null;
   }
 
-  stop(): void {
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-      this.timeoutId = null;
-    }
+  async completeSession(sessionId: string): Promise<void> {
+    const now = new Date().toISOString();
+
+    await this.db
+      .prepare(
+        `UPDATE pomodoro_sessions
+         SET status = 'completed',
+             completed_at = ?
+         WHERE id = ?`
+      )
+      .bind(now, sessionId)
+      .run();
+  }
+
+  async updateSession(sessionId: string): Promise<void> {
+    // Implementation
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    // Implementation
   }
 }

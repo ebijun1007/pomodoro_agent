@@ -2,6 +2,12 @@ name = "pomodoro-agent"
 main = "src/index.ts"
 compatibility_date = "2024-01-01"
 
+[triggers]
+crons = [
+  "0 20 * * *",  # JST 05:00 (翌日)
+  "0 13 * * *"   # JST 22:00
+]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "pomodoro_agent"

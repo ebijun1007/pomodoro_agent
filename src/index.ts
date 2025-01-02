@@ -1,19 +1,21 @@
 import { Hono } from 'hono';
-import { handle } from './slack';
-import { PomodoroManager } from './pomodoro';
-import { TaskManager } from './task';
 import { AgentManager } from './agent';
-import { ContextManager } from './context-manager';
 import { AIProcessor } from './ai';
+import { ContextManager } from './context-manager';
+import { PomodoroManager } from './pomodoro';
+import { handleScheduledSummary } from './scheduled-summary';
+import { handle } from './slack';
+import { TaskManager } from './task';
 
 const app = new Hono();
 
 interface Env {
   DB: D1Database;
-  pomodoro_context: KVNamespace; // KVネームスペースのbinding名を修正
+  pomodoro_context: KVNamespace;
   SLACK_BOT_TOKEN: string;
   SLACK_SIGNING_SECRET: string;
   ANTHROPIC_API_KEY: string;
+  SLACK_CHANNEL_ID: string;
 }
 
 app.post('/slack/events', async (c) => {
@@ -27,35 +29,45 @@ app.post('/slack/events', async (c) => {
   if (payload.type === 'event_callback') {
     const event = payload.event;
 
-    // メッセージイベントの場合のみ処理
     if (event.type === 'message' && !event.subtype) {
-      // botのメッセージは無視
       if (event.bot_id || event.bot_profile) {
         return c.json({ ok: true });
       }
 
-      const taskManager = new TaskManager(env.DB);
-      const pomodoroManager = new PomodoroManager(env.DB);
-      const contextManager = new ContextManager(env.DB, env.pomodoro_context);
-      const aiProcessor = new AIProcessor(env.ANTHROPIC_API_KEY);
-      const agentManager = new AgentManager(
-        taskManager,
-        pomodoroManager,
-        contextManager,
-        aiProcessor
-      );
+      if (event.channel_type === 'channel' || event.channel_type === 'group') {
+        const taskManager = new TaskManager(env.DB);
+        const pomodoroManager = new PomodoroManager(env.DB);
+        const contextManager = new ContextManager(env.DB, env.pomodoro_context);
+        const aiProcessor = new AIProcessor(env.ANTHROPIC_API_KEY);
+        const agentManager = new AgentManager(
+          taskManager,
+          pomodoroManager,
+          contextManager,
+          aiProcessor
+        );
 
-      await handle({
-        event,
-        taskManager,
-        pomodoroManager,
-        agentManager,
-        env,
-      });
+        await handle({
+          event,
+          taskManager,
+          pomodoroManager,
+          agentManager,
+          env,
+        });
+      }
     }
   }
 
   return c.json({ ok: true });
 });
 
-export default app;
+export default {
+  fetch: app.fetch,
+  scheduled: async (event: any, env: Env, ctx: any) => {
+    const hour = new Date().getHours();
+    if (hour === 5) {
+      await handleScheduledSummary(env, 'morning');
+    } else if (hour === 22) {
+      await handleScheduledSummary(env, 'evening');
+    }
+  },
+};

@@ -1,50 +1,99 @@
-export class SlackMessenger {
-  private readonly processedMessages = new Set<string>();
+// メッセージキャッシュの有効期限を1時間とする
+const MESSAGE_CACHE_TTL = 1000 * 60 * 60;
 
-  constructor(private readonly token: string) {
-    // 1時間ごとにメッセージキャッシュをクリア
-    setInterval(
-      () => {
-        this.processedMessages.clear();
-      },
-      1000 * 60 * 60
-    );
+class MessageCache {
+  private cache: Map<string, number>;
+
+  constructor() {
+    this.cache = new Map();
   }
 
-  async sendMessage(channel: string, text: string, threadTs?: string): Promise<boolean> {
-    const messageKey = `${channel}-${threadTs || Date.now()}`;
+  has(key: string): boolean {
+    const timestamp = this.cache.get(key);
+    if (!timestamp) return false;
 
-    // 同じメッセージが短時間に重複して送信されることを防ぐ
-    if (this.processedMessages.has(messageKey)) {
+    const now = Date.now();
+    if (now - timestamp > MESSAGE_CACHE_TTL) {
+      this.cache.delete(key);
       return false;
     }
+    return true;
+  }
 
-    try {
-      const response = await fetch('https://slack.com/api/chat.postMessage', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json; charset=utf-8',
-          Authorization: `Bearer ${this.token}`,
-        },
-        body: JSON.stringify({
-          channel,
-          text,
-          thread_ts: threadTs,
-        }),
-      });
+  add(key: string): void {
+    this.cache.set(key, Date.now());
+    this.cleanup();
+  }
 
-      const result = await response.json();
-      if (!result.ok) {
-        console.error('Slack API error:', result.error);
-        return false;
+  private cleanup(): void {
+    const now = Date.now();
+    for (const [key, timestamp] of this.cache.entries()) {
+      if (now - timestamp > MESSAGE_CACHE_TTL) {
+        this.cache.delete(key);
       }
-
-      // 成功したメッセージを記録
-      this.processedMessages.add(messageKey);
-      return true;
-    } catch (error) {
-      console.error('Failed to send Slack message:', error);
-      return false;
     }
+  }
+}
+
+const messageCache = new MessageCache();
+
+export async function callSlackAPI(
+  method: string,
+  body: Record<string, any>,
+  token: string
+): Promise<any> {
+  try {
+    const response = await fetch(`https://slack.com/api/${method}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const result = await response.json();
+    if (!result.ok) {
+      console.error(`Slack API error (${method}):`, result.error);
+      throw new Error(result.error);
+    }
+
+    return result;
+  } catch (error) {
+    console.error(`Failed to call Slack API (${method}):`, error);
+    throw error;
+  }
+}
+
+export async function sendMessage(
+  channel: string,
+  text: string,
+  token: string,
+  threadTs?: string
+): Promise<boolean> {
+  const messageKey = `${channel}-${threadTs || Date.now()}`;
+
+  // 同じメッセージが短時間に重複して送信されることを防ぐ
+  if (messageCache.has(messageKey)) {
+    return false;
+  }
+
+  try {
+    await callSlackAPI(
+      'chat.postMessage',
+      {
+        channel,
+        text,
+        thread_ts: threadTs,
+      },
+      token
+    );
+
+    // 成功したメッセージを記録
+    messageCache.add(messageKey);
+    return true;
+  } catch (error) {
+    console.error('Failed to send Slack message:', error);
+    return false;
   }
 }

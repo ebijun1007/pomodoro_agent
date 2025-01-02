@@ -1,4 +1,4 @@
-import { DailyContext, ConversationContext } from './types';
+import type { ConversationContext, DailyContext } from './types';
 
 export class ContextManager {
   private readonly KV_KEY_PREFIX = 'pomodoro_context:';

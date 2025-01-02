@@ -6,32 +6,62 @@ interface TaskExtraction {
   estimatedMinutes: number;
 }
 
+interface ClaudeResponse {
+  content: {
+    text: string;
+  }[];
+}
+
 export class AIProcessor {
   constructor(private anthropicApiKey: string) {}
 
   async analyzeMessage(prompt: string): Promise<{
     intent: string;
-    entities: any;
+    entities: Record<string, any>;
   }> {
     try {
-      console.log('AIProcessor: Analyzing message with prompt:', prompt); // デバッグログ
+      console.log('AIProcessor: Analyzing message with prompt:', prompt);
+
+      // 確認メッセージへの応答を最初にチェック
+      if (/^(はい|yes|ok|了解|承知|確認|削除して)$/i.test(prompt.trim())) {
+        console.log('AIProcessor: Detected confirmation response');
+        return {
+          intent: 'delete_project_confirm',
+          entities: {},
+        };
+      }
 
       const systemPrompt = `
 あなたはポモドーロタイマーアプリのアシスタントです。
 ユーザーのメッセージを解析し、以下の情報を抽出してください：
 
 1. 意図（intent）:
+- list_projects: プロジェクト一覧の表示
+- list_tasks: タスク一覧の表示
 - create_project: プロジェクトの作成
 - create_task: タスクの追加
+- delete_project: プロジェクトの削除
+- delete_project_confirm: プロジェクト削除の確認
 - start_pomodoro: ポモドーロの開始
+- show_summary: タスクサマリーの表示
 - check_status: 状況確認
+- going_out: 外出の通知
+- coming_back: 帰宅の通知
 - help: ヘルプ/使い方
 
 2. エンティティ（entities）:
+タスク一覧表示の場合:
+- projectId: プロジェクトID（特定のプロジェクトのタスクのみを表示する場合）
+- status: タスクのステータス（指定された場合のみ）
+
 プロジェクト作成の場合:
 - name: プロジェクト名
 - description: 説明
 - deadline: 期限
+
+プロジェクト削除の場合:
+- projectId: プロジェクトID
+- confirmed: 確認状態（true/false）
 
 タスク追加の場合:
 - projectId: プロジェクトID
@@ -45,11 +75,14 @@ export class AIProcessor {
 - workMinutes: 作業時間（デフォルト25分）
 - breakMinutes: 休憩時間（デフォルト5分）
 
-JSON形式で結果を返してください。`;
+外出の場合:
+- reason: 外出理由（指定された場合）
+- duration: 予定時間（指定された場合）
 
-      console.log('AIProcessor: Calling Claude API'); // デバッグログ
+JSONの形式で結果を返してください。`;
 
-      // Claude APIを呼び出してメッセージを解析
+      console.log('AIProcessor: Calling Claude API');
+
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -71,31 +104,27 @@ JSON形式で結果を返してください。`;
       });
 
       if (!response.ok) {
-        const errorData = await response.text();
-        console.error('Claude API error:', response.status, errorData);
-        throw new Error(`Claude API returned ${response.status}: ${errorData}`);
+        throw new Error(`Claude API returned ${response.status}`);
       }
 
-      console.log('AIProcessor: Received response from Claude API'); // デバッグログ
+      console.log('AIProcessor: Received response from Claude API');
 
-      const data = await response.json();
-      console.log('AIProcessor: Parsed response:', data); // デバッグログ
+      const data = (await response.json()) as ClaudeResponse;
+      console.log('AIProcessor: Parsed response:', data);
 
-      try {
-        if (data.content && data.content[0] && data.content[0].text) {
-          const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const parsedResult = JSON.parse(jsonMatch[0]);
-            console.log('AIProcessor: Successfully parsed JSON:', parsedResult); // デバッグログ
-            return parsedResult;
-          }
+      if (data.content?.[0]?.text) {
+        const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsedResult = JSON.parse(jsonMatch[0]) as {
+            intent: string;
+            entities: Record<string, any>;
+          };
+          console.log('AIProcessor: Successfully parsed JSON:', parsedResult);
+          return parsedResult;
         }
-      } catch (error) {
-        console.error('Error parsing AI response:', error);
       }
 
       // フォールバック: 基本的なインテント検出
-      console.log('AIProcessor: Falling back to basic intent detection'); // デバッグログ
       return {
         intent: this.detectBasicIntent(prompt),
         entities: this.extractBasicEntities(prompt),
@@ -110,12 +139,23 @@ JSON形式で結果を返してください。`;
   }
 
   private detectBasicIntent(message: string): string {
-    // 基本的なインテント検出のためのキーワードを拡充
     const keywords = {
+      list_projects: [
+        'プロジェクト一覧',
+        'プロジェクトリスト',
+        'プロジェクトを見せて',
+        'プロジェクトの状況',
+      ],
+      list_tasks: ['タスク一覧', 'タスクリスト', 'タスクを見せて', 'タスクの状況'],
       create_project: ['新しいプロジェクト', 'プロジェクトを作成', 'プロジェクト作成'],
       create_task: ['新しいタスク', 'タスクを追加', 'タスク作成'],
+      delete_project: ['プロジェクトを削除', '削除'],
+      delete_project_confirm: ['はい', '承認', '了解', 'OK', '確認'],
       start_pomodoro: ['ポモドーロ開始', '作業開始', 'タイマー開始'],
+      show_summary: ['今日のタスク', '作業状況', 'サマリー', 'まとめ'],
       check_status: ['状況', '進捗', '確認'],
+      going_out: ['行ってきます', '外出', '出かけ', '買い物', '会議'],
+      coming_back: ['戻りました', '帰りました', '戻ってきました', '帰宅'],
       help: ['使い方', 'ヘルプ', '説明'],
     };
 
@@ -130,9 +170,19 @@ JSON形式で結果を返してください。`;
     return 'unknown';
   }
 
-  private extractBasicEntities(message: string): any {
-    const entities: any = {};
+  private extractBasicEntities(message: string): Record<string, any> {
+    const entities: Record<string, any> = {};
     const lines = message.split('\n');
+
+    // UUIDパターンの検出
+    const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+    const uuidMatch = message.match(uuidPattern);
+    if (uuidMatch) {
+      // メッセージにプロジェクト削除のキーワードが含まれている場合
+      if (message.includes('削除')) {
+        entities.projectId = uuidMatch[0];
+      }
+    }
 
     for (const line of lines) {
       const colonIndex = line.indexOf(':');
@@ -142,6 +192,7 @@ JSON形式で結果を返してください。`;
 
         switch (key) {
           case 'プロジェクト名':
+          case 'プロジェクト':
             entities.name = value;
             break;
           case 'タスク':
@@ -153,12 +204,27 @@ JSON形式で結果を返してください。`;
           case '期限':
             entities.deadline = value;
             break;
-          case '見積時間':
-            const minutes = Number.parseInt(value);
+          case '見積時間': {
+            const minutes = Number.parseInt(value, 10);
             if (!isNaN(minutes)) {
               entities.estimatedMinutes = minutes;
             }
             break;
+          }
+          case 'id':
+          case 'プロジェクトid':
+            entities.projectId = value;
+            break;
+          case '理由':
+            entities.reason = value;
+            break;
+          case '予定時間': {
+            const duration = Number.parseInt(value, 10);
+            if (!isNaN(duration)) {
+              entities.duration = duration;
+            }
+            break;
+          }
         }
       }
     }
@@ -197,24 +263,23 @@ JSONの配列形式で結果を返してください。`;
         }),
       });
 
-      const data = await response.json();
-      if (data.content && data.content[0] && data.content[0].text) {
+      const data = (await response.json()) as ClaudeResponse;
+      if (data.content?.[0]?.text) {
         const jsonMatch = data.content[0].text.match(/\[[\s\S]*\]/);
         if (jsonMatch) {
-          return JSON.parse(jsonMatch[0]);
+          return JSON.parse(jsonMatch[0]) as TaskExtraction[];
         }
       }
     } catch (error) {
       console.error('Task decomposition error:', error);
     }
 
-    // フォールバック: 単一のタスクとして返す
     return [
       {
-        projectId: '', // 呼び出し側で設定
+        projectId: '',
         title: description,
         description: description,
-        deadline: '', // 呼び出し側で設定
+        deadline: '',
         estimatedMinutes: 25,
       },
     ];
@@ -247,10 +312,10 @@ JSONの配列形式で結果を返してください。`;
         }),
       });
 
-      const data = await response.json();
-      if (data.content && data.content[0] && data.content[0].text) {
-        const minutes = Number.parseInt(data.content[0].text.trim());
-        if (!isNaN(minutes)) {
+      const data = (await response.json()) as ClaudeResponse;
+      if (data.content?.[0]?.text) {
+        const minutes = Number.parseInt(data.content[0].text.trim(), 10);
+        if (!Number.isNaN(minutes)) {
           return minutes;
         }
       }
@@ -258,6 +323,6 @@ JSONの配列形式で結果を返してください。`;
       console.error('Task estimation error:', error);
     }
 
-    return 25; // デフォルト値
+    return 25;
   }
 }
