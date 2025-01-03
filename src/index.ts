@@ -60,14 +60,19 @@ app.post('/slack/events', async (c) => {
   return c.json({ ok: true });
 });
 
+// Workerのエクスポート
 export default {
   fetch: app.fetch,
-  scheduled: async (event: any, env: Env, ctx: any) => {
-    const hour = new Date().getHours();
-    if (hour === 5) {
-      await handleScheduledSummary(env, 'morning');
-    } else if (hour === 22) {
-      await handleScheduledSummary(env, 'evening');
+  
+  // 定期実行のハンドラー
+  scheduled: async (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+    // cron式で以下のように設定することを推奨:
+    // "0 5,22 * * *"  // 毎日5時と22時に実行
+    
+    try {
+      await handleScheduledSummary(env);
+    } catch (error) {
+      console.error('Scheduled summary error:', error);
     }
   },
 };

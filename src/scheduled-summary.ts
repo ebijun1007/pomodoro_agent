@@ -69,21 +69,43 @@ export async function generateSummaryMessage(
   return message;
 }
 
+export async function shouldSendSummary(now = new Date()): boolean {
+  // UTC時間を日本時間に変換
+  const jstOffset = 9 * 60; // JST is UTC+9
+  const jstMinutes = now.getUTCHours() * 60 + now.getUTCMinutes() + jstOffset;
+  const jstHours = Math.floor((jstMinutes % 1440) / 60); // 1440 = 24 * 60
+
+  // 日本時間の5時または22時の場合にtrueを返す
+  return jstHours === 5 || jstHours === 22;
+}
+
 export async function handleScheduledSummary(
   env: {
     DB: D1Database;
     SLACK_BOT_TOKEN: string;
     SLACK_CHANNEL_ID: string;
-  },
-  timeOfDay: 'morning' | 'evening'
+  }
 ): Promise<void> {
+  // 現在時刻が通知すべき時間かチェック
+  if (!await shouldSendSummary()) {
+    return;
+  }
+
   const taskManager = new TaskManager(env.DB);
   const pomodoroManager = new PomodoroManager(env.DB);
 
   try {
+    // 日本時間を取得
+    const now = new Date();
+    const jstOffset = 9 * 60;
+    const jstMinutes = now.getUTCHours() * 60 + now.getUTCMinutes() + jstOffset;
+    const jstHours = Math.floor((jstMinutes % 1440) / 60);
+
+    const timeOfDay = jstHours === 5 ? 'morning' : 'evening';
     const message = await generateSummaryMessage(taskManager, pomodoroManager);
-    const prefix =
-      timeOfDay === 'morning' ? '☀️ おはようございます！\n' : '🌙 本日もお疲れ様でした！\n';
+    const prefix = timeOfDay === 'morning' 
+      ? '☀️ おはようございます！\n今日も1日頑張りましょう！\n\n'
+      : '🌙 本日もお疲れ様でした！\n明日に向けて現在の状況をお知らせします。\n\n';
 
     await callSlackAPI(
       'chat.postMessage',

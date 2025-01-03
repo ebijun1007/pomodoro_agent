@@ -8,30 +8,35 @@ Pomodoro Agent is a Slack-based task management system that combines the Pomodor
   - Automatically breaks down large tasks into manageable chunks
   - Estimates task duration based on descriptions
   - Intelligent task prioritization based on deadlines
+  - Context-aware task suggestions
 
 - **Pomodoro Timer Integration**
   - Customizable work and break durations
   - Automatic session tracking
   - Daily session statistics
+  - Context persistence between sessions
 
 - **Project Management**
   - Multiple project support
   - Task categorization by project
   - Deadline tracking
   - Progress monitoring
+  - Automated daily summaries
 
 - **Slack Integration**
   - Natural language interaction
   - Real-time notifications
   - Task selection prompts between sessions
   - Interactive buttons for common actions
+  - Channel-specific configurations
 
 ## Prerequisites
 
-- Cloudflare account with Workers and D1 enabled
+- Cloudflare account with Workers, D1, and KV enabled
 - Slack workspace with admin permissions
 - Node.js 18 or higher
 - npm 7 or higher
+- Anthropic API key
 
 ## Installation
 
@@ -56,28 +61,29 @@ npm install
    - Install the app to your workspace
    - Copy the Bot User OAuth Token and Signing Secret
 
-4. Set up Cloudflare D1:
+4. Set up Cloudflare services:
 ```bash
 # Create a D1 database
 wrangler d1 create pomodoro_agent
 
-# The command will output something like:
-# ✓ Successfully created DB 'pomodoro_agent' in region APAC
-# Created database 'pomodoro_agent' at ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# Create KV namespace for context
+wrangler kv:namespace create pomodoro_context
 ```
 
 5. Configure the environment:
    - Copy `wrangler.toml.example` to `wrangler.toml`
    - Update the following in `wrangler.toml`:
-     - `database_id`: Your D1 database ID from step 4
+     - `database_id`: Your D1 database ID
      - `SLACK_BOT_TOKEN`: Your Slack Bot User OAuth Token
      - `SLACK_SIGNING_SECRET`: Your Slack App Signing Secret
+     - `ANTHROPIC_API_KEY`: Your Anthropic API key
+     - `SLACK_CHANNEL_ID`: Your Slack channel ID
+     - `pomodoro_context`: Your KV namespace ID
 
 6. Initialize the database schema:
 ```bash
 wrangler d1 execute pomodoro_agent --file=./schema.sql
 ```
-Note: The .wrangler directory will be created locally for development purposes. This directory contains local database copies and should not be committed to version control.
 
 7. Deploy the worker:
 ```bash
@@ -116,18 +122,10 @@ Break time: 5
 ### Custom Settings
 
 You can customize various settings through chat commands:
-
 - Change default work/break durations
 - Adjust notification preferences
 - Modify task prioritization rules
-
-### Task Management
-
-The agent will:
-- Track task progress
-- Suggest next tasks based on priority
-- Provide daily and weekly summaries
-- Alert you about approaching deadlines
+- Configure context retention period
 
 ## Development
 
@@ -136,59 +134,49 @@ The agent will:
 ```
 /
 ├── src/
-│   ├── index.ts        # Main application
-│   ├── task.ts         # Task management
-│   ├── pomodoro.ts     # Pomodoro management
-│   ├── agent.ts        # Agent management
-│   ├── ai.ts           # AI processing
-│   └── slack.ts        # Slack integration
-├── schema.sql          # Database schema
-├── package.json        # Project configuration
-├── tsconfig.json       # TypeScript configuration
-└── wrangler.toml.example # Cloudflare Workers configuration template
+│   ├── index.ts            # Main application
+│   ├── task.ts             # Task management
+│   ├── pomodoro.ts         # Pomodoro management
+│   ├── agent.ts            # Agent management
+│   ├── ai.ts               # AI processing
+│   ├── slack.ts            # Slack integration
+│   ├── context-manager.ts  # Context management
+│   ├── scheduled-summary.ts# Automated summaries
+│   ├── slack-messenger.ts  # Slack message handling
+│   └── types.ts            # Type definitions
+├── schema.sql              # Database schema
+├── package.json            # Project configuration
+├── tsconfig.json           # TypeScript configuration
+└── wrangler.toml.example   # Cloudflare Workers configuration template
 ```
 
-### Database Schema
+### Development Workflow
 
-The application uses Cloudflare D1 with the following schema:
+1. Start development server:
+```bash
+npm run dev
+```
 
-```sql
-CREATE TABLE projects (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  description TEXT,
-  deadline TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
+2. Run linter:
+```bash
+npm run lint
+```
 
-CREATE TABLE tasks (
-  id TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT,
-  status TEXT NOT NULL,
-  deadline TEXT,
-  estimated_minutes INTEGER NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  FOREIGN KEY (project_id) REFERENCES projects(id)
-);
+3. Format code:
+```bash
+npm run format
+```
 
-CREATE TABLE pomodoro_sessions (
-  id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL,
-  work_minutes INTEGER NOT NULL,
-  break_minutes INTEGER NOT NULL,
-  completed_at TEXT NOT NULL,
-  FOREIGN KEY (task_id) REFERENCES tasks(id)
-);
+4. Run type checking:
+```bash
+npm run check
+```
 
-CREATE TABLE daily_records (
-  id TEXT PRIMARY KEY,
-  date TEXT NOT NULL UNIQUE,
-  completed_sessions INTEGER NOT NULL DEFAULT 0
-);
+### Testing
+
+The project includes unit tests for core functionality. To run tests:
+```bash
+npm test
 ```
 
 ## Contributing
@@ -217,9 +205,12 @@ If you encounter any issues or have questions, please:
 - [ ] Advanced analytics and reporting
 - [ ] Calendar integration
 - [ ] Custom AI models for better task estimation
+- [ ] Context-aware task suggestions
+- [ ] Automated task decomposition
 
 ## Acknowledgments
 
 - [Pomodoro Technique](https://francescocirillo.com/products/the-pomodoro-technique) by Francesco Cirillo
 - [Cloudflare Workers](https://workers.cloudflare.com/)
 - [Slack API](https://api.slack.com/)
+- [Anthropic API](https://www.anthropic.com/)

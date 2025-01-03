@@ -12,30 +12,37 @@ interface ClaudeResponse {
   }[];
 }
 
+interface ConversationContext {
+  previousIntents: string[];
+  lastEntities: Record<string, any>;
+  currentProjectId?: string;
+  currentTaskId?: string;
+}
+
 export class AIProcessor {
+  private context: ConversationContext = {
+    previousIntents: [],
+    lastEntities: {},
+  };
+
   constructor(private anthropicApiKey: string) {}
 
   async analyzeMessage(prompt: string): Promise<{
     intent: string;
     entities: Record<string, any>;
+    confidence: number;
   }> {
     try {
-      console.log('AIProcessor: Analyzing message with prompt:', prompt);
-
-      // 確認メッセージへの応答を最初にチェック
-      if (/^(はい|yes|ok|了解|承知|確認|削除して)$/i.test(prompt.trim())) {
-        console.log('AIProcessor: Detected confirmation response');
-        return {
-          intent: 'delete_project_confirm',
-          entities: {},
-        };
-      }
+      console.log('AIProcessor: Analyzing message with context:', this.context);
 
       const systemPrompt = `
 あなたはポモドーロタイマーアプリのアシスタントです。
-ユーザーのメッセージを解析し、以下の情報を抽出してください：
+以下の情報を考慮してユーザーのメッセージを解析してください：
 
-1. 意図（intent）:
+1. 会話のコンテキスト：
+${JSON.stringify(this.context, null, 2)}
+
+2. 意図（intent）の種類：
 - list_projects: プロジェクト一覧の表示
 - list_tasks: タスク一覧の表示
 - create_project: 単一プロジェクトの作成
@@ -49,71 +56,27 @@ export class AIProcessor {
 - going_out: 外出の通知
 - coming_back: 帰宅の通知
 - help: ヘルプ/使い方
+- clarify: 曖昧な指示に対する確認
 
-2. エンティティ（entities）:
-タスク一覧表示の場合:
-- projectId: プロジェクトID（特定のプロジェクトのタスクのみを表示する場合）
-- status: タスクのステータス（指定された場合のみ）
+3. エンティティ抽出のガイドライン：
+- 曖昧な表現はユーザーに確認する
+- タイポを自動修正する
+- コンテキストから不足情報を補完する
 
-単一プロジェクト作成の場合:
-- name: プロジェクト名
-- description: 説明
-- deadline: 期限
-
-複数プロジェクト作成の場合:
-- projects: プロジェクトの配列
-  [
-    {
-      "name": "プロジェクト名",
-      "description": "説明（省略可）",
-      "deadline": "期限（省略可）"
-    },
-    ...
-  ]
-
-プロジェクト削除の場合:
-- projectId: プロジェクトID
-- confirmed: 確認状態（true/false）
-
-タスク追加の場合:
-- projectId: プロジェクトID
-- title: タスク名
-- description: 説明
-- deadline: 期限
-- estimatedMinutes: 見積時間（分）
-
-ポモドーロ開始の場合:
-- taskId: タスクID
-- workMinutes: 作業時間（デフォルト25分）
-- breakMinutes: 休憩時間（デフォルト5分）
-
-外出の場合:
-- reason: 外出理由（指定された場合）
-- duration: 予定時間（指定された場合）
-
-特に、以下のような形式のメッセージの場合は、複数プロジェクト作成（create_projects）として解析してください：
-
-"以下のプロジェクトを追加してください。
-・プロジェクトA
-・プロジェクトB
-・プロジェクトC"
-
-このような場合、以下のようなJSONを返してください：
-
+4. 出力形式：
 {
-  "intent": "create_projects",
+  "intent": "detected_intent",
   "entities": {
-    "projects": [
-      {"name": "プロジェクトA"},
-      {"name": "プロジェクトB"},
-      {"name": "プロジェクトC"}
-    ]
-  }
+    // 抽出されたエンティティ
+  },
+  "confidence": 0.9, // 0-1の信頼度
+  "clarification": "必要な確認事項" // 必要な場合のみ
 }
 
-JSONの形式で結果を返してください。`;
-
-      console.log('AIProcessor: Calling Claude API');
+特に注意すべき点：
+- 曖昧な指示はclarify intentとして返す
+- 信頼度が0.8未満の場合は確認を求める
+- コンテキストを活用して不足情報を補完する`;
 
       const response = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -123,7 +86,7 @@ JSONの形式で結果を返してください。`;
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-3-sonnet-20240229',
+          model: 'claude-3-opus-20240229', // より高度なモデルを使用
           max_tokens: 4096,
           system: systemPrompt,
           messages: [
@@ -139,157 +102,93 @@ JSONの形式で結果を返してください。`;
         throw new Error(`Claude API returned ${response.status}`);
       }
 
-      console.log('AIProcessor: Received response from Claude API');
-
       const data = (await response.json()) as ClaudeResponse;
-      console.log('AIProcessor: Parsed response:', data);
-
       if (data.content?.[0]?.text) {
         const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsedResult = JSON.parse(jsonMatch[0]) as {
             intent: string;
             entities: Record<string, any>;
+            confidence: number;
+            clarification?: string;
           };
-          console.log('AIProcessor: Successfully parsed JSON:', parsedResult);
+
+          // コンテキスト更新
+          this.updateContext(parsedResult);
+
+          if (parsedResult.confidence < 0.8 || parsedResult.intent === 'clarify') {
+            return {
+              intent: 'clarify',
+              entities: {},
+              confidence: parsedResult.confidence,
+            };
+          }
+
           return parsedResult;
         }
       }
 
-      // フォールバック: 基本的なインテント検出
       return {
-        intent: this.detectBasicIntent(prompt),
-        entities: this.extractBasicEntities(prompt),
+        intent: 'unknown',
+        entities: {},
+        confidence: 0,
       };
     } catch (error) {
       console.error('AI analysis error:', error);
       return {
         intent: 'unknown',
         entities: {},
+        confidence: 0,
       };
     }
   }
 
-  private detectBasicIntent(message: string): string {
-    const keywords = {
-      list_projects: [
-        'プロジェクト一覧',
-        'プロジェクトリスト',
-        'プロジェクトを見せて',
-        'プロジェクトの状況',
-      ],
-      list_tasks: ['タスク一覧', 'タスクリスト', 'タスクを見せて', 'タスクの状況'],
-      create_project: ['新しいプロジェクト', 'プロジェクトを作成', 'プロジェクト作成'],
-      create_task: ['新しいタスク', 'タスクを追加', 'タスク作成'],
-      delete_project: ['プロジェクトを削除', '削除'],
-      delete_project_confirm: ['はい', '承認', '了解', 'OK', '確認'],
-      start_pomodoro: ['ポモドーロ開始', '作業開始', 'タイマー開始'],
-      show_summary: ['今日のタスク', '作業状況', 'サマリー', 'まとめ'],
-      check_status: ['状況', '進捗', '確認'],
-      going_out: ['行ってきます', '外出', '出かけ', '買い物', '会議'],
-      coming_back: ['戻りました', '帰りました', '戻ってきました', '帰宅'],
-      help: ['使い方', 'ヘルプ', '説明'],
-    };
-
-    // 複数プロジェクト作成の特別なケースをチェック
-      return 'create_projects';
+  private updateContext(result: {
+    intent: string;
+    entities: Record<string, any>;
+    confidence: number;
+  }) {
+    // 最新のインテントを記録
+    this.context.previousIntents.push(result.intent);
+    if (this.context.previousIntents.length > 5) {
+      this.context.previousIntents.shift();
     }
 
-    for (const [intent, words] of Object.entries(keywords)) {
-      if (words.some((word) => message.includes(word))) {
-        console.log(`AIProcessor: Detected intent "${intent}" from keywords`);
-        return intent;
-      }
+    // エンティティを更新
+    this.context.lastEntities = result.entities;
+
+    // 現在のプロジェクト/タスクを更新
+    if (result.entities.projectId) {
+      this.context.currentProjectId = result.entities.projectId;
     }
-
-    console.log('AIProcessor: No specific intent detected, returning "unknown"');
-    return 'unknown';
-  }
-
-  private extractBasicEntities(message: string): Record<string, any> {
-    const entities: Record<string, any> = {};
-    const lines = message.split('\n');
-
-    // 複数プロジェクト作成の特別なケースをチェック
-      const projects = lines
-        .filter((line) => line.trim().startsWith('・'))
-        .map((line) => ({
-          name: line.trim().replace('・', '').trim(),
-        }));
-
-      if (projects.length > 0) {
-        return { projects };
-      }
+    if (result.entities.taskId) {
+      this.context.currentTaskId = result.entities.taskId;
     }
-
-    // UUIDパターンの検出
-    const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
-    const uuidMatch = message.match(uuidPattern);
-    if (uuidMatch) {
-      // メッセージにプロジェクト削除のキーワードが含まれている場合
-      if (message.includes('削除')) {
-        entities.projectId = uuidMatch[0];
-      }
-    }
-
-    for (const line of lines) {
-      const colonIndex = line.indexOf(':');
-      if (colonIndex !== -1) {
-        const key = line.substring(0, colonIndex).trim().toLowerCase();
-        const value = line.substring(colonIndex + 1).trim();
-
-        switch (key) {
-          case 'プロジェクト名':
-          case 'プロジェクト':
-            entities.name = value;
-            break;
-          case 'タスク':
-            entities.title = value;
-            break;
-          case '説明':
-            entities.description = value;
-            break;
-          case '期限':
-            entities.deadline = value;
-            break;
-          case '見積時間': {
-            const minutes = Number.parseInt(value, 10);
-            if (!isNaN(minutes)) {
-              entities.estimatedMinutes = minutes;
-            }
-            break;
-          }
-          case 'id':
-          case 'プロジェクトid':
-            entities.projectId = value;
-            break;
-          case '理由':
-            entities.reason = value;
-            break;
-          case '予定時間': {
-            const duration = Number.parseInt(value, 10);
-            if (!isNaN(duration)) {
-              entities.duration = duration;
-            }
-            break;
-          }
-        }
-      }
-    }
-
-    console.log('AIProcessor: Extracted entities:', entities);
-    return entities;
   }
 
   async decomposeTask(description: string): Promise<TaskExtraction[]> {
     const systemPrompt = `
-ポモドーロテクニックに適した大きさ（25分程度）のサブタスクに分解してください。
-各サブタスクには以下の情報が必要です：
-- タイトル
-- 説明
-- 見積時間（分）
+タスクをポモドーロテクニックに適したサブタスクに分解してください。
+以下のガイドラインに従ってください：
 
-JSONの配列形式で結果を返してください。`;
+1. 各サブタスクは25分±5分で完了できる大きさ
+2. 依存関係を考慮
+3. 優先順位を設定
+4. リソース要件を明記
+5. リスク要因を特定
+
+出力形式：
+[
+  {
+    "title": "サブタスク名",
+    "description": "詳細説明",
+    "estimatedMinutes": 見積時間,
+    "dependencies": ["依存タスクID"], // 任意
+    "priority": 1-3, // 1:高 2:中 3:低
+    "resources": ["必要なリソース"], // 任意
+    "risks": ["リスク要因"] // 任意
+  }
+]`;
 
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -300,7 +199,7 @@ JSONの配列形式で結果を返してください。`;
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-3-sonnet-20240229',
+          model: 'claude-3-opus-20240229',
           system: systemPrompt,
           messages: [
             {
@@ -333,12 +232,34 @@ JSONの配列形式で結果を返してください。`;
     ];
   }
 
-  async estimateTaskDuration(description: string): Promise<number> {
+  async estimateTaskDuration(description: string): Promise<{
+    estimatedMinutes: number;
+    confidence: number;
+    breakdown?: {
+      phase: string;
+      minutes: number;
+    }[];
+  }> {
     const systemPrompt = `
-以下のタスクの実行に必要な時間を見積もってください。
-- ポモドーロテクニックに基づいて（1ポモドーロ = 25分）
-- 見積時間を分単位で返してください
-- 単一の数値のみを返してください`;
+タスクの実行時間を見積もってください。
+以下のガイドラインに従ってください：
+
+1. タスクをフェーズごとに分解
+2. 各フェーズの時間を見積もる
+3. バッファ時間を考慮
+4. 信頼度を0-1で評価
+
+出力形式：
+{
+  "estimatedMinutes": 総時間,
+  "confidence": 信頼度,
+  "breakdown": [
+    {
+      "phase": "フェーズ名",
+      "minutes": 見積時間
+    }
+  ]
+}`;
 
     try {
       const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -349,7 +270,7 @@ JSONの配列形式で結果を返してください。`;
           'anthropic-version': '2023-06-01',
         },
         body: JSON.stringify({
-          model: 'claude-3-sonnet-20240229',
+          model: 'claude-3-opus-20240229',
           system: systemPrompt,
           messages: [
             {
@@ -362,15 +283,66 @@ JSONの配列形式で結果を返してください。`;
 
       const data = (await response.json()) as ClaudeResponse;
       if (data.content?.[0]?.text) {
-        const minutes = Number.parseInt(data.content[0].text.trim(), 10);
-        if (!Number.isNaN(minutes)) {
-          return minutes;
+        const jsonMatch = data.content[0].text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          return JSON.parse(jsonMatch[0]) as {
+            estimatedMinutes: number;
+            confidence: number;
+            breakdown?: {
+              phase: string;
+              minutes: number;
+            }[];
+          };
         }
       }
     } catch (error) {
       console.error('Task estimation error:', error);
     }
 
-    return 25;
+    return {
+      estimatedMinutes: 25,
+      confidence: 0.5,
+    };
+  }
+
+  async requestClarification(prompt: string): Promise<string> {
+    const systemPrompt = `
+ユーザーの指示が曖昧な場合に、明確化を求めるメッセージを生成してください。
+以下のポイントを考慮してください：
+
+1. 曖昧な部分を特定
+2. 具体的な質問を提示
+3. 選択肢を提供
+4. 丁寧な表現を使用`;
+
+    try {
+      const response = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.anthropicApiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-3-opus-20240229',
+          system: systemPrompt,
+          messages: [
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+        }),
+      });
+
+      const data = (await response.json()) as ClaudeResponse;
+      if (data.content?.[0]?.text) {
+        return data.content[0].text;
+      }
+    } catch (error) {
+      console.error('Clarification request error:', error);
+    }
+
+    return 'もう少し具体的に説明していただけますか？';
   }
 }

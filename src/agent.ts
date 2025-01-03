@@ -130,28 +130,22 @@ export class AgentManager {
         !Array.isArray(entities.projects) ||
         entities.projects.length === 0
       ) {
-        return 'プロジェクトのリストを指定してください。';
+        return 'プロジェクトのリストを指定してください。\n例：\n・プロジェクトA\n・プロジェクトB\n・プロジェクトC';
       }
 
       const projectIds = await this.taskManager.createMultipleProjects(
-        entities.projects.map((p) => ({
+        entities.projects.map((p: any) => ({
           name: p.name,
           description: p.description || '',
-          deadline: p.deadline,
+          deadline: p.deadline || null,
         }))
       );
 
-      interface ProjectEntity {
-        name: string;
-        description?: string;
-        deadline?: string;
-      }
-
-      const createdProjects: string = entities.projects
-        .map((p: ProjectEntity, i: number): string => `• ${p.name} (ID: ${projectIds[i]})`)
+      const projectList = entities.projects
+        .map((p: any, i: number) => `• ${p.name} (ID: ${projectIds[i]})`)
         .join('\n');
 
-      return `✅ ${projectIds.length}個のプロジェクトを作成しました：\n${createdProjects}`;
+      return `✅ ${projectIds.length}個のプロジェクトを作成しました：\n${projectList}`;
     } catch (error) {
       console.error('Create multiple projects error:', error);
       return 'プロジェクトの作成中にエラーが発生しました。もう一度お試しください。';
@@ -192,10 +186,13 @@ export class AgentManager {
 
   private async handleCreateMultipleTasks(entities: any): Promise<string> {
     try {
-      let projectId = entities.projectId;
+      if (!entities.projectId) {
+        return 'タスクを追加するプロジェクトのIDを指定してください。';
+      }
 
-      // プロジェクトIDが実際のUUIDでない場合は、名前でプロジェクトを検索
+      let projectId = entities.projectId;
       if (!projectId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+        // プロジェクトIDが実際のUUIDでない場合は、名前でプロジェクトを検索
         const project = await this.taskManager.getProjectByName(projectId);
         if (!project) {
           return `プロジェクト「${projectId}」が見つかりません。`;
@@ -204,24 +201,29 @@ export class AgentManager {
       }
 
       if (!entities.tasks || !Array.isArray(entities.tasks) || entities.tasks.length === 0) {
-        return 'タスクのリストを指定してください。';
+        return 'タスクのリストを指定してください。\n例：\n・タスクA\n・タスクB\n・タスクC';
+      }
+
+      const project = await this.taskManager.getProject(projectId);
+      if (!project) {
+        return `指定されたプロジェクト（ID: ${projectId}）が見つかりません。`;
       }
 
       const taskIds = await this.taskManager.createMultipleTasks(
         projectId,
-        entities.tasks.map((t) => ({
+        entities.tasks.map((t: any) => ({
           title: t.title,
           description: t.description || '',
-          deadline: t.deadline,
+          deadline: t.deadline || null,
           estimatedMinutes: t.estimatedMinutes || 25,
         }))
       );
 
-      const createdTasks = entities.tasks
-        .map((t: { title: any }, i: string | number) => `• ${t.title} (ID: ${taskIds[i]})`)
+      const taskList = entities.tasks
+        .map((t: any, i: number) => `• ${t.title} (ID: ${taskIds[i]})`)
         .join('\n');
 
-      return `✅ ${taskIds.length}個のタスクを作成しました：\n${createdTasks}`;
+      return `✅ プロジェクト「${project.name}」に${taskIds.length}個のタスクを追加しました：\n${taskList}`;
     } catch (error) {
       console.error('Create multiple tasks error:', error);
       return 'タスクの作成中にエラーが発生しました。もう一度お試しください。';
@@ -333,6 +335,25 @@ export class AgentManager {
 • 行ってきます
 • 戻りました
 
-各コマンドは自然な日本語で入力できます。`;
+各コマンドは自然な日本語で入力できます。
+また、以下のような形式でまとめて登録することもできます：
+
+*プロジェクトの一括登録*
+以下のプロジェクトを追加して
+・プロジェクトA
+・プロジェクトB
+・プロジェクトC
+
+*タスクの一括登録*
+プロジェクトXXXに以下のタスクを追加して
+・タスク1（25分）
+・タスク2（1時間）
+・タスク3（2時間）
+
+💡 *補足*
+・見積時間を指定しない場合は、デフォルトで25分が設定されます
+・プロジェクト名やタスク名は日本語で入力可能です
+・定期的に（朝5時と夜22時）にタスクの状況をお知らせします
+`;
   }
 }
