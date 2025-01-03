@@ -1,8 +1,8 @@
-import { TaskManager } from './task';
-import { PomodoroManager } from './pomodoro';
-import { ContextManager } from './context-manager';
-import { AIProcessor } from './ai';
+import type { AIProcessor } from './ai';
+import type { ContextManager } from './context-manager';
+import type { PomodoroManager } from './pomodoro';
 import { generateSummaryMessage } from './scheduled-summary';
+import type { TaskManager } from './task';
 
 export class AgentManager {
   constructor(
@@ -26,10 +26,14 @@ export class AgentManager {
           return await this.handleListProjects();
         case 'create_project':
           return await this.handleCreateProject(analysis.entities);
-        case 'delete_project':
-          return await this.handleDeleteProject(analysis.entities, channelId);
+        case 'create_projects':
+          return await this.handleCreateMultipleProjects(analysis.entities);
         case 'create_task':
           return await this.handleCreateTask(analysis.entities);
+        case 'create_tasks':
+          return await this.handleCreateMultipleTasks(analysis.entities);
+        case 'delete_project':
+          return await this.handleDeleteProject(analysis.entities, channelId);
         case 'start_pomodoro':
           return await this.handleStartPomodoro(analysis.entities, channelId);
         case 'going_out':
@@ -119,6 +123,111 @@ export class AgentManager {
     }
   }
 
+  private async handleCreateMultipleProjects(entities: any): Promise<string> {
+    try {
+      if (
+        !entities.projects ||
+        !Array.isArray(entities.projects) ||
+        entities.projects.length === 0
+      ) {
+        return 'プロジェクトのリストを指定してください。';
+      }
+
+      const projectIds = await this.taskManager.createMultipleProjects(
+        entities.projects.map((p) => ({
+          name: p.name,
+          description: p.description || '',
+          deadline: p.deadline,
+        }))
+      );
+
+      interface ProjectEntity {
+        name: string;
+        description?: string;
+        deadline?: string;
+      }
+
+      const createdProjects: string = entities.projects
+        .map((p: ProjectEntity, i: number): string => `• ${p.name} (ID: ${projectIds[i]})`)
+        .join('\n');
+
+      return `✅ ${projectIds.length}個のプロジェクトを作成しました：\n${createdProjects}`;
+    } catch (error) {
+      console.error('Create multiple projects error:', error);
+      return 'プロジェクトの作成中にエラーが発生しました。もう一度お試しください。';
+    }
+  }
+
+  private async handleCreateTask(entities: any): Promise<string> {
+    try {
+      let projectId = entities.projectId;
+
+      // プロジェクトIDが実際のUUIDでない場合は、名前でプロジェクトを検索
+      if (!projectId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+        const project = await this.taskManager.getProjectByName(projectId);
+        if (!project) {
+          return `プロジェクト「${projectId}」が見つかりません。`;
+        }
+        projectId = project.id;
+      }
+
+      if (!entities.title) {
+        return 'タスクのタイトルを指定してください。';
+      }
+
+      const taskId = await this.taskManager.createTask({
+        projectId: projectId,
+        title: entities.title,
+        description: entities.description || '',
+        deadline: entities.deadline,
+        estimatedMinutes: entities.estimatedMinutes || 25,
+      });
+
+      return `✅ タスク「${entities.title}」を作成しました（ID: ${taskId}）`;
+    } catch (error) {
+      console.error('Create task error:', error);
+      return 'タスクの作成中にエラーが発生しました。';
+    }
+  }
+
+  private async handleCreateMultipleTasks(entities: any): Promise<string> {
+    try {
+      let projectId = entities.projectId;
+
+      // プロジェクトIDが実際のUUIDでない場合は、名前でプロジェクトを検索
+      if (!projectId.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+        const project = await this.taskManager.getProjectByName(projectId);
+        if (!project) {
+          return `プロジェクト「${projectId}」が見つかりません。`;
+        }
+        projectId = project.id;
+      }
+
+      if (!entities.tasks || !Array.isArray(entities.tasks) || entities.tasks.length === 0) {
+        return 'タスクのリストを指定してください。';
+      }
+
+      const taskIds = await this.taskManager.createMultipleTasks(
+        projectId,
+        entities.tasks.map((t) => ({
+          title: t.title,
+          description: t.description || '',
+          deadline: t.deadline,
+          estimatedMinutes: t.estimatedMinutes || 25,
+        }))
+      );
+
+      const createdTasks = entities.tasks
+        .map((t: { title: any }, i: string | number) => `• ${t.title} (ID: ${taskIds[i]})`)
+        .join('\n');
+
+      return `✅ ${taskIds.length}個のタスクを作成しました：\n${createdTasks}`;
+    } catch (error) {
+      console.error('Create multiple tasks error:', error);
+      return 'タスクの作成中にエラーが発生しました。もう一度お試しください。';
+    }
+  }
+
   private async handleDeleteProject(entities: any, channelId: string): Promise<string> {
     try {
       const projectId = entities.projectId;
@@ -139,30 +248,6 @@ export class AgentManager {
     } catch (error) {
       console.error('Delete project error:', error);
       return 'プロジェクトの削除中にエラーが発生しました。操作をやり直してください。';
-    }
-  }
-
-  private async handleCreateTask(entities: any): Promise<string> {
-    try {
-      if (!entities.projectId) {
-        return 'タスクを作成するプロジェクトを指定してください。';
-      }
-      if (!entities.title) {
-        return 'タスクのタイトルを指定してください。';
-      }
-
-      const taskId = await this.taskManager.createTask({
-        projectId: entities.projectId,
-        title: entities.title,
-        description: entities.description || '',
-        deadline: entities.deadline,
-        estimatedMinutes: entities.estimatedMinutes || 25,
-      });
-
-      return `✅ タスク「${entities.title}」を作成しました（ID: ${taskId}）`;
-    } catch (error) {
-      console.error('Create task error:', error);
-      return 'タスクの作成中にエラーが発生しました。';
     }
   }
 
@@ -225,12 +310,14 @@ export class AgentManager {
 📋 *プロジェクト管理*
 • プロジェクト一覧を見せて
 • 新しいプロジェクトを作成して
+• 複数のプロジェクトを追加して
 • プロジェクトを削除して
 
 📝 *タスク管理*
 • タスク一覧を見せて
 • [プロジェクト名]のタスクを見せて
 • 新しいタスクを追加して
+• 複数のタスクを追加して
 
 📊 *状況確認*
 • 今日のタスクを教えて

@@ -38,7 +38,8 @@ export class AIProcessor {
 1. 意図（intent）:
 - list_projects: プロジェクト一覧の表示
 - list_tasks: タスク一覧の表示
-- create_project: プロジェクトの作成
+- create_project: 単一プロジェクトの作成
+- create_projects: 複数プロジェクトの一括作成
 - create_task: タスクの追加
 - delete_project: プロジェクトの削除
 - delete_project_confirm: プロジェクト削除の確認
@@ -54,10 +55,21 @@ export class AIProcessor {
 - projectId: プロジェクトID（特定のプロジェクトのタスクのみを表示する場合）
 - status: タスクのステータス（指定された場合のみ）
 
-プロジェクト作成の場合:
+単一プロジェクト作成の場合:
 - name: プロジェクト名
 - description: 説明
 - deadline: 期限
+
+複数プロジェクト作成の場合:
+- projects: プロジェクトの配列
+  [
+    {
+      "name": "プロジェクト名",
+      "description": "説明（省略可）",
+      "deadline": "期限（省略可）"
+    },
+    ...
+  ]
 
 プロジェクト削除の場合:
 - projectId: プロジェクトID
@@ -78,6 +90,26 @@ export class AIProcessor {
 外出の場合:
 - reason: 外出理由（指定された場合）
 - duration: 予定時間（指定された場合）
+
+特に、以下のような形式のメッセージの場合は、複数プロジェクト作成（create_projects）として解析してください：
+
+"以下のプロジェクトを追加してください。
+・プロジェクトA
+・プロジェクトB
+・プロジェクトC"
+
+このような場合、以下のようなJSONを返してください：
+
+{
+  "intent": "create_projects",
+  "entities": {
+    "projects": [
+      {"name": "プロジェクトA"},
+      {"name": "プロジェクトB"},
+      {"name": "プロジェクトC"}
+    ]
+  }
+}
 
 JSONの形式で結果を返してください。`;
 
@@ -159,6 +191,10 @@ JSONの形式で結果を返してください。`;
       help: ['使い方', 'ヘルプ', '説明'],
     };
 
+    // 複数プロジェクト作成の特別なケースをチェック
+      return 'create_projects';
+    }
+
     for (const [intent, words] of Object.entries(keywords)) {
       if (words.some((word) => message.includes(word))) {
         console.log(`AIProcessor: Detected intent "${intent}" from keywords`);
@@ -173,6 +209,18 @@ JSONの形式で結果を返してください。`;
   private extractBasicEntities(message: string): Record<string, any> {
     const entities: Record<string, any> = {};
     const lines = message.split('\n');
+
+    // 複数プロジェクト作成の特別なケースをチェック
+      const projects = lines
+        .filter((line) => line.trim().startsWith('・'))
+        .map((line) => ({
+          name: line.trim().replace('・', '').trim(),
+        }));
+
+      if (projects.length > 0) {
+        return { projects };
+      }
+    }
 
     // UUIDパターンの検出
     const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
