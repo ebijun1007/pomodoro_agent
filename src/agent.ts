@@ -255,17 +255,34 @@ export class AgentManager {
 
   private async handleStartPomodoro(entities: any, channelId: string): Promise<string> {
     try {
-      if (!entities.taskId) {
-        return 'ポモドーロを開始するタスクのIDを指定してください。';
+      if (!entities.taskId && !entities.taskName) {
+        return 'ポモドーロを開始するタスクを指定してください。タスク名で指定することができます。';
       }
 
-      const task = await this.taskManager.getTask(entities.taskId);
+      let task = null;
+      if (entities.taskId) {
+        task = await this.taskManager.getTask(entities.taskId);
+      } else {
+        task = await this.taskManager.getTaskByName(entities.taskName);
+      }
+
       if (!task) {
-        return `タスク（ID: ${entities.taskId}）が見つかりません。`;
+        // 類似のタスクを検索
+        const similarTasks = await this.taskManager.findSimilarTasks(
+          entities.taskName || entities.taskId
+        );
+        if (similarTasks.length > 0) {
+          const suggestions = similarTasks
+            .slice(0, 3)
+            .map((t) => `・${t.title} (プロジェクト: ${t.project_name})`)
+            .join('\n');
+          return `指定されたタスクが見つかりませんでした。\n以下のタスクのいずれかをお探しでしょうか？\n\n${suggestions}`;
+        }
+        return 'タスクが見つかりませんでした。タスク名を確認してもう一度お試しください。';
       }
 
       await this.pomodoroManager.startPomodoro({
-        taskId: entities.taskId,
+        taskId: task.id,
         channelId,
         workMinutes: entities.workMinutes || 25,
         breakMinutes: entities.breakMinutes || 5,

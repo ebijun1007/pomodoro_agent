@@ -22,6 +22,76 @@ export class TaskManager {
     return result.results as Task[];
   }
 
+  // 新しい関数: タスク名での検索（部分一致）
+  async findTasksByName(name: string): Promise<Task[]> {
+    const result = await this.db
+      .prepare(`
+        SELECT t.*, p.name as project_name
+        FROM tasks t
+        JOIN projects p ON t.project_id = p.id
+        WHERE t.title LIKE ?
+        ORDER BY t.created_at DESC
+      `)
+      .bind(`%${name}%`)
+      .all();
+
+    return result.results as Task[];
+  }
+
+  // 新しい関数: プロジェクト名での検索（部分一致）
+  async findProjectsByName(name: string): Promise<Project[]> {
+    const result = await this.db
+      .prepare(`
+        SELECT *
+        FROM projects
+        WHERE name LIKE ?
+        ORDER BY created_at DESC
+      `)
+      .bind(`%${name}%`)
+      .all();
+
+    return result.results as Project[];
+  }
+
+  // 新しい関数: タスクの類似度検索
+  private calculateSimilarity(str1: string, str2: string): number {
+    const s1 = str1.toLowerCase();
+    const s2 = str2.toLowerCase();
+    
+    // レーベンシュタイン距離の計算
+    const matrix: number[][] = Array(s1.length + 1).fill(null).map(() => Array(s2.length + 1).fill(null));
+    
+    for (let i = 0; i <= s1.length; i++) matrix[i][0] = i;
+    for (let j = 0; j <= s2.length; j++) matrix[0][j] = j;
+    
+    for (let i = 1; i <= s1.length; i++) {
+      for (let j = 1; j <= s2.length; j++) {
+        const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    
+    const maxLength = Math.max(s1.length, s2.length);
+    return 1 - matrix[s1.length][s2.length] / maxLength;
+  }
+
+  // 新しい関数: 類似度に基づくタスク検索
+  async findSimilarTasks(query: string, threshold: number = 0.6): Promise<Task[]> {
+    const allTasks = await this.getAllTasks();
+    return allTasks.filter(task => this.calculateSimilarity(task.title, query) >= threshold);
+  }
+
+  // 新しい関数: 類似度に基づくプロジェクト検索
+  async findSimilarProjects(query: string, threshold: number = 0.6): Promise<Project[]> {
+    const allProjects = await this.getAllProjects();
+    return allProjects.filter(project => this.calculateSimilarity(project.name, query) >= threshold);
+  }
+
+  // 既存のメソッドをそのまま維持
   async getTasksByProject(projectId: string): Promise<Task[]> {
     const result = await this.db
       .prepare(`
@@ -77,6 +147,16 @@ export class TaskManager {
 
     const tasks = result.results as Task[];
     return tasks[0] || null;
+  }
+
+  // タスク名からタスクを取得する新しい関数
+  async getTaskByName(name: string): Promise<Task | null> {
+    const tasks = await this.findTasksByName(name);
+    if (tasks.length === 0) {
+      const similarTasks = await this.findSimilarTasks(name);
+      return similarTasks[0] || null;
+    }
+    return tasks[0];
   }
 
   async createTask({
@@ -139,7 +219,6 @@ export class TaskManager {
     const errors: string[] = [];
 
     try {
-      // タスクを一つずつ作成
       for (const task of tasks) {
         try {
           const taskId = crypto.randomUUID();
@@ -229,11 +308,15 @@ export class TaskManager {
     return projects[0] || null;
   }
 
+  // 新しいバージョン: プロジェクト名での検索を改善
   async getProjectByName(name: string): Promise<Project | null> {
-    const result = await this.db.prepare('SELECT * FROM projects WHERE name = ?').bind(name).all();
-
-    const projects = result.results as Project[];
-    return projects[0] || null;
+    const projects = await this.findProjectsByName(name);
+    if (projects.length === 0) {
+      // 部分一致で見つからない場合は類似度検索を試みる
+      const similarProjects = await this.findSimilarProjects(name);
+      return similarProjects[0] || null;
+    }
+    return projects[0];
   }
 
   async createProject({
@@ -277,7 +360,6 @@ export class TaskManager {
     const errors: string[] = [];
 
     try {
-      // プロジェクトを一つずつ作成
       for (const project of projects) {
         try {
           const projectId = crypto.randomUUID();
@@ -355,6 +437,29 @@ export class TaskManager {
         FROM tasks t
         JOIN projects p ON t.project_id = p.id
         ORDER BY t.updated_at DESC
+        LIMIT ?
+      `)
+      .bind(limit)
+      .all();
+
+    return result.results as Task[];
+  }
+
+  // 新しい関数: 優先度の高いタスクを取得
+  async getPriorityTasks(limit = 5): Promise<Task[]> {
+    const result = await this.db
+      .prepare(`
+        SELECT t.*, p.name as project_name
+        FROM tasks t
+        JOIN projects p ON t.project_id = p.id
+        WHERE t.status = 'pending'
+        ORDER BY 
+          CASE 
+            WHEN t.deadline IS NULL THEN 1
+            ELSE 0
+          END,
+          t.deadline ASC,
+          t.created_at ASC
         LIMIT ?
       `)
       .bind(limit)

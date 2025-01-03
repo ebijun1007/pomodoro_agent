@@ -21,8 +21,8 @@ async function checkDuplicateEvent(event: any, kv: KVNamespace): Promise<boolean
       return true;
     }
 
-    // イベントを保存（24時間後に自動削除）
-    await kv.put(key, '1', { expirationTtl: 86400 });
+    // イベントを保存（10秒後に自動削除）
+    await kv.put(key, '1', { expirationTtl: 10 });
     return false;
   } catch (error) {
     console.error('Error checking duplicate event:', error);
