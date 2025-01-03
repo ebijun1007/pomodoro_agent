@@ -19,7 +19,7 @@ interface Env {
 }
 
 app.post('/slack/events', async (c) => {
-  const env = c.env as Env;
+  const env = c.env as unknown as Env;
   const payload = await c.req.json();
 
   if (payload.type === 'url_verification') {
@@ -48,8 +48,6 @@ app.post('/slack/events', async (c) => {
 
         await handle({
           event,
-          taskManager,
-          pomodoroManager,
           agentManager,
           env,
         });
@@ -63,12 +61,12 @@ app.post('/slack/events', async (c) => {
 // Workerのエクスポート
 export default {
   fetch: app.fetch,
-  
+
   // 定期実行のハンドラー
-  scheduled: async (event: ScheduledEvent, env: Env, ctx: ExecutionContext) => {
+  scheduled: async (env: Env) => {
     // cron式で以下のように設定することを推奨:
     // "0 5,22 * * *"  // 毎日5時と22時に実行
-    
+
     try {
       await handleScheduledSummary(env);
     } catch (error) {

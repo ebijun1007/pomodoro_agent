@@ -79,15 +79,13 @@ export async function shouldSendSummary(now = new Date()): boolean {
   return jstHours === 5 || jstHours === 22;
 }
 
-export async function handleScheduledSummary(
-  env: {
-    DB: D1Database;
-    SLACK_BOT_TOKEN: string;
-    SLACK_CHANNEL_ID: string;
-  }
-): Promise<void> {
+export async function handleScheduledSummary(env: {
+  DB: D1Database;
+  SLACK_BOT_TOKEN: string;
+  SLACK_CHANNEL_ID: string;
+}): Promise<void> {
   // 現在時刻が通知すべき時間かチェック
-  if (!await shouldSendSummary()) {
+  if (!(await shouldSendSummary())) {
     return;
   }
 
@@ -103,9 +101,10 @@ export async function handleScheduledSummary(
 
     const timeOfDay = jstHours === 5 ? 'morning' : 'evening';
     const message = await generateSummaryMessage(taskManager, pomodoroManager);
-    const prefix = timeOfDay === 'morning' 
-      ? '☀️ おはようございます！\n今日も1日頑張りましょう！\n\n'
-      : '🌙 本日もお疲れ様でした！\n明日に向けて現在の状況をお知らせします。\n\n';
+    const prefix =
+      timeOfDay === 'morning'
+        ? '☀️ おはようございます！\n今日も1日頑張りましょう！\n\n'
+        : '🌙 本日もお疲れ様でした！\n明日に向けて現在の状況をお知らせします。\n\n';
 
     await callSlackAPI(
       'chat.postMessage',

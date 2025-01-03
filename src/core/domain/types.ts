@@ -38,3 +38,19 @@ export interface TaskCount {
   inProgress: number;
   completed: number;
 }
+
+export type TaskStatus = 'pending' | 'in_progress' | 'completed';
+
+export interface CreateTaskRequest {
+  projectId: string;
+  title: string;
+  description: string;
+  deadline?: string;
+  estimatedMinutes: number;
+}
+
+export interface CreateProjectRequest {
+  name: string;
+  description: string;
+  deadline?: string;
+}

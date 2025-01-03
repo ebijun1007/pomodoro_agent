@@ -33,7 +33,7 @@ export class AgentManager {
         case 'create_tasks':
           return await this.handleCreateMultipleTasks(analysis.entities);
         case 'delete_project':
-          return await this.handleDeleteProject(analysis.entities, channelId);
+          return await this.handleDeleteProject(analysis.entities);
         case 'start_pomodoro':
           return await this.handleStartPomodoro(analysis.entities, channelId);
         case 'going_out':
@@ -230,7 +230,7 @@ export class AgentManager {
     }
   }
 
-  private async handleDeleteProject(entities: any, channelId: string): Promise<string> {
+  private async handleDeleteProject(entities: any): Promise<string> {
     try {
       const projectId = entities.projectId;
       if (!projectId) {

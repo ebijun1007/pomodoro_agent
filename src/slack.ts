@@ -2,8 +2,6 @@ import { callSlackAPI } from './slack-messenger';
 
 interface HandleParams {
   event: any;
-  taskManager: any;
-  pomodoroManager: any;
   agentManager: any;
   env: {
     SLACK_BOT_TOKEN: string;
@@ -30,13 +28,7 @@ async function checkDuplicateEvent(event: any, kv: KVNamespace): Promise<boolean
   }
 }
 
-export async function handle({
-  event,
-  taskManager,
-  pomodoroManager,
-  agentManager,
-  env,
-}: HandleParams) {
+export async function handle({ event, agentManager, env }: HandleParams) {
   // 重複チェック
   if (await checkDuplicateEvent(event, env.pomodoro_context)) {
     console.log('Skipping duplicate event');

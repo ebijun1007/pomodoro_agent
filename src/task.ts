@@ -1,7 +1,33 @@
-import type { Project, Task, TaskCount } from './types';
+import type { Project, Task, TaskCount } from './core/domain/types';
 
 export class TaskManager {
   constructor(private db: D1Database) {}
+
+  private convertToTasks(results: Record<string, unknown>[]): Task[] {
+    return results.map((result) => ({
+      id: String(result.id),
+      project_id: String(result.project_id),
+      title: String(result.title),
+      description: String(result.description),
+      status: result.status as 'pending' | 'in_progress' | 'completed',
+      estimated_minutes: Number(result.estimated_minutes),
+      deadline: result.deadline ? String(result.deadline) : undefined,
+      created_at: String(result.created_at),
+      updated_at: String(result.updated_at),
+      project_name: result.project_name ? String(result.project_name) : undefined,
+    }));
+  }
+
+  private convertToProjects(results: Record<string, unknown>[]): Project[] {
+    return results.map((result) => ({
+      id: String(result.id),
+      name: String(result.name),
+      description: String(result.description),
+      deadline: result.deadline ? String(result.deadline) : undefined,
+      created_at: String(result.created_at),
+      updated_at: String(result.updated_at),
+    }));
+  }
 
   async getAllTasks(): Promise<Task[]> {
     const result = await this.db
@@ -19,7 +45,7 @@ export class TaskManager {
       `)
       .all();
 
-    return result.results as Task[];
+    return this.convertToTasks(result.results);
   }
 
   // 新しい関数: タスク名での検索（部分一致）
@@ -35,7 +61,7 @@ export class TaskManager {
       .bind(`%${name}%`)
       .all();
 
-    return result.results as Task[];
+    return this.convertToTasks(result.results);
   }
 
   // 新しい関数: プロジェクト名での検索（部分一致）
@@ -50,20 +76,22 @@ export class TaskManager {
       .bind(`%${name}%`)
       .all();
 
-    return result.results as Project[];
+    return this.convertToProjects(result.results);
   }
 
   // 新しい関数: タスクの類似度検索
   private calculateSimilarity(str1: string, str2: string): number {
     const s1 = str1.toLowerCase();
     const s2 = str2.toLowerCase();
-    
+
     // レーベンシュタイン距離の計算
-    const matrix: number[][] = Array(s1.length + 1).fill(null).map(() => Array(s2.length + 1).fill(null));
-    
+    const matrix: number[][] = Array(s1.length + 1)
+      .fill(null)
+      .map(() => Array(s2.length + 1).fill(null));
+
     for (let i = 0; i <= s1.length; i++) matrix[i][0] = i;
     for (let j = 0; j <= s2.length; j++) matrix[0][j] = j;
-    
+
     for (let i = 1; i <= s1.length; i++) {
       for (let j = 1; j <= s2.length; j++) {
         const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
@@ -74,21 +102,23 @@ export class TaskManager {
         );
       }
     }
-    
+
     const maxLength = Math.max(s1.length, s2.length);
     return 1 - matrix[s1.length][s2.length] / maxLength;
   }
 
   // 新しい関数: 類似度に基づくタスク検索
-  async findSimilarTasks(query: string, threshold: number = 0.6): Promise<Task[]> {
+  async findSimilarTasks(query: string, threshold = 0.6): Promise<Task[]> {
     const allTasks = await this.getAllTasks();
-    return allTasks.filter(task => this.calculateSimilarity(task.title, query) >= threshold);
+    return allTasks.filter((task) => this.calculateSimilarity(task.title, query) >= threshold);
   }
 
   // 新しい関数: 類似度に基づくプロジェクト検索
-  async findSimilarProjects(query: string, threshold: number = 0.6): Promise<Project[]> {
+  async findSimilarProjects(query: string, threshold = 0.6): Promise<Project[]> {
     const allProjects = await this.getAllProjects();
-    return allProjects.filter(project => this.calculateSimilarity(project.name, query) >= threshold);
+    return allProjects.filter(
+      (project) => this.calculateSimilarity(project.name, query) >= threshold
+    );
   }
 
   // 既存のメソッドをそのまま維持
@@ -110,7 +140,7 @@ export class TaskManager {
       .bind(projectId)
       .all();
 
-    return result.results as Task[];
+    return this.convertToTasks(result.results);
   }
 
   async getTasksByStatus(status: string): Promise<Task[]> {
@@ -131,7 +161,7 @@ export class TaskManager {
       .bind(status)
       .all();
 
-    return result.results as Task[];
+    return this.convertToTasks(result.results);
   }
 
   async getTask(taskId: string): Promise<Task | null> {
@@ -145,7 +175,7 @@ export class TaskManager {
       .bind(taskId)
       .all();
 
-    const tasks = result.results as Task[];
+    const tasks = this.convertToTasks(result.results);
     return tasks[0] || null;
   }
 
@@ -295,7 +325,7 @@ export class TaskManager {
       `)
       .all();
 
-    return result.results as Project[];
+    return this.convertToProjects(result.results);
   }
 
   async getProject(projectId: string): Promise<Project | null> {
@@ -304,7 +334,7 @@ export class TaskManager {
       .bind(projectId)
       .all();
 
-    const projects = result.results as Project[];
+    const projects = this.convertToProjects(result.results);
     return projects[0] || null;
   }
 
@@ -442,7 +472,7 @@ export class TaskManager {
       .bind(limit)
       .all();
 
-    return result.results as Task[];
+    return this.convertToTasks(result.results);
   }
 
   // 新しい関数: 優先度の高いタスクを取得
@@ -465,6 +495,6 @@ export class TaskManager {
       .bind(limit)
       .all();
 
-    return result.results as Task[];
+    return this.convertToTasks(result.results);
   }
 }
